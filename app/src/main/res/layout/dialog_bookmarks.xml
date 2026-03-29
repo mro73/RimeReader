@@ -27,14 +27,22 @@
         android:padding="8dp"
         android:layout_marginBottom="16dp"/>
 
-    <ScrollView
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="300dp">
 
-        <LinearLayout
+        <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/bookmarksContainer"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
-    </ScrollView>
+            android:layout_height="match_parent" />
+
+        <TextView
+            android:id="@+id/textEmptyInfo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:text="Brak zakładek"
+            android:gravity="center"
+            android:visibility="gone" />
+
+    </FrameLayout>
 </LinearLayout>

@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.view.View
 import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -382,69 +383,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showBookmarksDialog() { // Zakładki
-        if(playlist.isEmpty()) return
-
-        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.dialog_bookmarks, null)
-        dialog.setContentView(view)
-
-        val btnAdd = view.findViewById<ImageView>(R.id.btnAddBookmark)
-        val container = view.findViewById<android.widget.LinearLayout>(R.id.bookmarksContainer)
-
-        val currentFile = playlist[currentSongIndex]
-
-        fun refreshBookmarksView() {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val dbList = bookmarkDao.getBookmarksForSong(currentFile.id)
-
-                withContext(Dispatchers.Main) {
-                    container.removeAllViews()
-                    for (bookmark in dbList) {
-                        val itemView = layoutInflater.inflate(R.layout.item_bookmark, null)
-                        val textTime = itemView.findViewById<TextView>(R.id.textBookmarkTime)
-                        val btnDelete = itemView.findViewById<ImageView>(R.id.btnDeleteBookmark)
-
-                        textTime.text = "Czas: ${bookmark.displayTime}"
-
-                        itemView.setOnClickListener { // Kliknięcie w zakładkę
-                            exoPlayer.seekTo(bookmark.timeMillis.toLong())
-                            textCurrentTime.text = formatTime(bookmark.timeMillis)
-                            dialog.dismiss()
-                        }
-                        btnDelete.setOnClickListener {
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                bookmarkDao.delete(bookmark)
-                                withContext(Dispatchers.Main) { refreshBookmarksView() }
-                            }
-                        }
-                        container.addView(itemView)
-                    }
-                    if (dbList.isEmpty()) {
-                        val emptyInfo = TextView(this@MainActivity)
-                        emptyInfo.text = "Brak zakładek"
-                        emptyInfo.gravity = android.view.Gravity.CENTER
-                        emptyInfo.setPadding(0, 50, 0, 0)
-                        container.addView(emptyInfo)
-                    }
-                }
-            }
-        }
-
-        btnAdd.setOnClickListener { // Nowa zakładka
-            val currentMs = exoPlayer.currentPosition.toInt()
-            val display = formatTime(currentMs)
-            val newBookmark = Bookmark(songId = currentFile.id, timeMillis = currentMs, displayTime = display)
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                bookmarkDao.insert(newBookmark)
-                withContext(Dispatchers.Main) { refreshBookmarksView() }
-            }
-        }
-        refreshBookmarksView()
-        dialog.show()
-    }
-
     private fun updatePlayPauseIcon() {
         if (::exoPlayer.isInitialized && exoPlayer.isPlaying) {
             buttonPlay.setImageResource(R.drawable.pause)
@@ -458,32 +396,88 @@ class MainActivity : AppCompatActivity() {
         val view = layoutInflater.inflate(R.layout.dialog_playlist, null)
         dialog.setContentView(view)
 
-        val container = view.findViewById<android.widget.LinearLayout>(R.id.playlistContainer)
+        val recyclerView = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.playlistContainer)
+        recyclerView.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
 
-        for (i in playlist.indices) {
-            val audioFile = playlist[i]
+        val adapter = PlaylistAdapter(playlist, currentSongIndex, ::formatTime) { clickedIndex ->
+            currentSongIndex = clickedIndex
+            playTrack(currentSongIndex, autoStart = true)
+            dialog.dismiss()
+        }
+        recyclerView.adapter = adapter
 
-            val itemView = layoutInflater.inflate(R.layout.item_song, null)
-            val textName = itemView.findViewById<TextView>(R.id.textSongName)
-            val textDuration = itemView.findViewById<TextView>(R.id.textSongDuration)
-            val icon = itemView.findViewById<ImageView>(R.id.iconNote)
+        dialog.show()
+    }
 
-            textName.text = audioFile.title
-            textDuration.text = formatTime(audioFile.duration)
+    private fun showBookmarksDialog() { // Zakładki
+        if(playlist.isEmpty()) return
 
-            if (i == currentSongIndex) { // Dla aktualnego utworu
-                textName.setTypeface(null, android.graphics.Typeface.BOLD)
-                icon.setColorFilter(android.graphics.Color.BLUE)
-            }
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.dialog_bookmarks, null)
+        dialog.setContentView(view)
 
-            itemView.setOnClickListener {
-                currentSongIndex = i
-                playTrack(currentSongIndex, autoStart = true)
+        val btnAdd = view.findViewById<ImageView>(R.id.btnAddBookmark)
+        val recyclerView = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.bookmarksContainer)
+        val textEmptyInfo = view.findViewById<TextView>(R.id.textEmptyInfo)
+
+        recyclerView.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
+
+        val currentFile = playlist[currentSongIndex]
+
+        val adapter = BookmarksAdapter(
+            onBookmarkClick = { bookmark ->
+                exoPlayer.seekTo(bookmark.timeMillis.toLong())
+                textCurrentTime.text = formatTime(bookmark.timeMillis)
                 dialog.dismiss()
+            },
+            onDeleteClick = { bookmark ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    bookmarkDao.delete(bookmark)
+                    // Usunięto przekazywanie zmiennej adapter
+                    refreshBookmarksView(currentFile.id, textEmptyInfo, recyclerView)
+                }
             }
-            container.addView(itemView)
+        )
+        recyclerView.adapter = adapter
+
+        btnAdd.setOnClickListener { // Nowa zakładka
+            val currentMs = exoPlayer.currentPosition.toInt()
+            val display = formatTime(currentMs)
+            val newBookmark = Bookmark(songId = currentFile.id, timeMillis = currentMs, displayTime = display)
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                bookmarkDao.insert(newBookmark)
+                // Usunięto przekazywanie zmiennej adapter
+                refreshBookmarksView(currentFile.id, textEmptyInfo, recyclerView)
+            }
+        }
+
+        // Pobranie zakładek przy otwarciu
+        lifecycleScope.launch(Dispatchers.IO) {
+            refreshBookmarksView(currentFile.id, textEmptyInfo, recyclerView)
         }
         dialog.show()
+    }
+
+    // Funkcja pomocnicza już nie wymaga zmiennej adapter jako argumentu
+    private suspend fun refreshBookmarksView(
+        songId: Long,
+        emptyView: TextView?,
+        recyclerView: androidx.recyclerview.widget.RecyclerView
+    ) {
+        val dbList = bookmarkDao.getBookmarksForSong(songId)
+        withContext(Dispatchers.Main) {
+            // Pobieramy adapter bezpośrednio z recyclerView
+            (recyclerView.adapter as? BookmarksAdapter)?.submitList(dbList)
+
+            if (dbList.isEmpty()) {
+                emptyView?.visibility = View.VISIBLE
+                recyclerView.visibility = View.GONE
+            } else {
+                emptyView?.visibility = View.GONE
+                recyclerView.visibility = View.VISIBLE
+            }
+        }
     }
 
     override fun onDestroy() {
