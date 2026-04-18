@@ -3,319 +3,268 @@ package com.example.rimereader
 import android.Manifest
 import android.content.ContentUris
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
-import android.view.View
-import android.widget.ImageView
-import android.widget.SeekBar
-import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.room.Room
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.TimeUnit
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 
-// Dla dokładniejszego czasu
-//import androidx.media3.extractor.DefaultExtractorsFactory
-//import androidx.media3.extractor.mp3.Mp3Extractor
-//import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
     private lateinit var exoPlayer: ExoPlayer
-    private lateinit var textSongTitle: TextView
-    private lateinit var seekBar: SeekBar
-    private lateinit var textCurrentTime: TextView
-    private lateinit var textTotalTime: TextView
-    private lateinit var buttonPlay: ImageView
-    private lateinit var buttonStop: ImageView
-    private lateinit var buttonRewind: ImageView
-    private lateinit var buttonForward: ImageView
-    private lateinit var buttonSpeed: ImageView
-    private lateinit var buttonLoop: ImageView
-    private var isLooping = false
-    private lateinit var buttonPrevFile: ImageView
-    private lateinit var buttonNextFile: ImageView
     private val playlist = ArrayList<AudioFile>()
     private val speeds = floatArrayOf(1.0f, 1.25f, 1.5f, 1.75f)
     private var currentSpeedIndex = 0
     private var currentSongIndex = 0
-
-    private lateinit var buttonBookmarks: ImageView
-    private lateinit var buttonPlaylist: ImageView
 
     private lateinit var db: AppDatabase
     private lateinit var bookmarkDao: BookmarkDao
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var composeSongTitle by mutableStateOf("")
+    private var composeCurrentTimeMs by mutableIntStateOf(0)
+    private var composeTotalTimeMs by mutableIntStateOf(0)
+    private var composeIsPlaying by mutableStateOf(false)
+    private var composeIsLooping by mutableStateOf(false)
+    private var composeCurrentSpeed by mutableFloatStateOf(1.0f)
+
+    private var showPlaylistSheet by mutableStateOf(false)
+    private var showBookmarksSheet by mutableStateOf(false)
+
+    private var currentBookmarks by mutableStateOf<List<Bookmark>>(emptyList())
+
     private val updateSeekBar: Runnable = object : Runnable {
         override fun run() {
             if (::exoPlayer.isInitialized && exoPlayer.isPlaying) {
-                val currentPos = exoPlayer.currentPosition
-                val duration = exoPlayer.duration.coerceAtLeast(1)
-
-                seekBar.max = duration.toInt()
-                seekBar.progress = currentPos.toInt()
-                textCurrentTime.text = formatTime(currentPos.toInt())
-
+                composeCurrentTimeMs = exoPlayer.currentPosition.toInt()
                 handler.postDelayed(this, 200)
             }
         }
     }
 
-    private val requestPermissionLauncher = registerForActivityResult( // Uprawnienia
+    private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
-        if (isGranted) {
-            loadAudioFiles()
-        } else {
-            Toast.makeText(this, "Brak uprawnień do odczytywania plików", Toast.LENGTH_LONG).show()
-        }
+        if (isGranted) loadAudioFiles() else Toast.makeText(this, "Brak uprawnień", Toast.LENGTH_LONG).show()
     }
 
-    // Przyciski
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
         db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "audiobook-db")
             .fallbackToDestructiveMigration()
             .build()
         bookmarkDao = db.bookmarkDao()
 
-        initViews()
-
         exoPlayer = ExoPlayer.Builder(this).build()
-        // Dla dokładniejszego czasu: Zamienić powyższą 1 linijkę na te poniżej
-        //val extractorsFactory = DefaultExtractorsFactory()
-        //    .setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
-        //val mediaSourceFactory = DefaultMediaSourceFactory(this, extractorsFactory)
-        //exoPlayer = ExoPlayer.Builder(this)
-        //    .setMediaSourceFactory(mediaSourceFactory)
-        //    .build()
 
         exoPlayer.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
-                    buttonNextFile.performClick()
-                }
+                if (playbackState == Player.STATE_ENDED) playNextFile()
                 if (playbackState == Player.STATE_READY && exoPlayer.playWhenReady) {
                     handler.removeCallbacks(updateSeekBar)
                     handler.post(updateSeekBar)
                 }
-
-                updatePlayPauseIcon()
+                composeIsPlaying = exoPlayer.isPlaying
             }
-
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Toast.makeText(this@MainActivity, "Błąd odtwarzania", Toast.LENGTH_SHORT).show()
             }
         })
 
-        buttonPlay.setOnClickListener {
-            if (exoPlayer.isPlaying) {
-                exoPlayer.pause()
-            } else {
-                exoPlayer.play()
-                applySpeed()
-                handler.post(updateSeekBar)
-            }
-            updatePlayPauseIcon()
-        }
-
-        buttonStop.setOnClickListener {
-            exoPlayer.stop()
-            exoPlayer.clearMediaItems()
-            updatePlayPauseIcon()
-
-            playTrack(currentSongIndex, autoStart = false) // od początku
-        }
-
-        buttonRewind.setOnClickListener {
-            val newPosition = exoPlayer.currentPosition - 15000
-            exoPlayer.seekTo(if (newPosition > 0) newPosition else 0) // bez ujemnych
-
-            textCurrentTime.text = formatTime(exoPlayer.currentPosition.toInt())
-            seekBar.progress = newPosition.toInt()
-        }
-
-        buttonForward.setOnClickListener {
-            val newPosition = exoPlayer.currentPosition + 30000
-            val duration = exoPlayer.duration
-            exoPlayer.seekTo(if (newPosition < duration) newPosition else duration) // nie więcej niż długość
-
-            textCurrentTime.text = formatTime(exoPlayer.currentPosition.toInt())
-            seekBar.progress = newPosition.toInt()
-        }
-
-        buttonSpeed.setOnClickListener {
-            currentSpeedIndex = (currentSpeedIndex + 1) % speeds.size
-            applySpeed()
-            Toast.makeText(this, "Prędkość odtwarzania: ${speeds[currentSpeedIndex]}x", Toast.LENGTH_SHORT).show()
-        }
-
-        buttonPrevFile.setOnClickListener {
-            if (playlist.isNotEmpty()) {
-                currentSongIndex = if (currentSongIndex > 0) currentSongIndex - 1 else playlist.size - 1
-                playTrack(currentSongIndex, autoStart = true)
-            }
-        }
-
-        buttonNextFile.setOnClickListener {
-            if (playlist.isNotEmpty()) {
-                currentSongIndex = (currentSongIndex + 1) % playlist.size
-                playTrack(currentSongIndex, autoStart = true)
-            }
-        }
-
-        buttonLoop.setOnClickListener {
-            isLooping = !isLooping
-            exoPlayer.repeatMode = if (isLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-
-            if (isLooping) {
-                buttonLoop.setColorFilter(android.graphics.Color.BLUE)
-                Toast.makeText(this, "Powtarzanie włączone", Toast.LENGTH_SHORT).show()
-            } else {
-                buttonLoop.clearColorFilter()
-                Toast.makeText(this, "Powtarzanie wyłączone", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        buttonBookmarks = findViewById(R.id.buttonBookmarks)
-        buttonBookmarks.setOnClickListener { showBookmarksDialog() }
-
-        buttonPlaylist = findViewById(R.id.buttonPlaylist)
-        buttonPlaylist.setOnClickListener { showPlaylistDialog() }
-
-        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) {
-                    textCurrentTime.text = formatTime(progress)
-                }
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                handler.removeCallbacks(updateSeekBar)
-            }
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                if (seekBar != null) {
-                    exoPlayer.seekTo(seekBar.progress.toLong())
-                    if (exoPlayer.playWhenReady) {
+        setContent {
+            PlayerScreen(
+                songTitle = composeSongTitle,
+                currentTimeMs = composeCurrentTimeMs,
+                totalTimeMs = composeTotalTimeMs,
+                isPlaying = composeIsPlaying,
+                isLooping = composeIsLooping,
+                currentSpeed = composeCurrentSpeed,
+                onPlayPauseClick = {
+                    if (exoPlayer.isPlaying) exoPlayer.pause()
+                    else {
+                        exoPlayer.play()
+                        applySpeed()
                         handler.post(updateSeekBar)
                     }
+                    composeIsPlaying = exoPlayer.isPlaying
+                },
+                onStopClick = {
+                    exoPlayer.stop()
+                    exoPlayer.clearMediaItems()
+                    composeIsPlaying = false
+                    composeCurrentTimeMs = 0
+                    playTrack(currentSongIndex, autoStart = false)
+                },
+                onRewindClick = {
+                    val newPosition = exoPlayer.currentPosition - 15000
+                    exoPlayer.seekTo(if (newPosition > 0) newPosition else 0)
+                    composeCurrentTimeMs = exoPlayer.currentPosition.toInt()
+                },
+                onForwardClick = {
+                    val newPosition = exoPlayer.currentPosition + 30000
+                    val duration = exoPlayer.duration
+                    exoPlayer.seekTo(if (newPosition < duration) newPosition else duration)
+                    composeCurrentTimeMs = exoPlayer.currentPosition.toInt()
+                },
+                onPrevClick = {
+                    if (playlist.isNotEmpty()) {
+                        currentSongIndex = if (currentSongIndex > 0) currentSongIndex - 1 else playlist.size - 1
+                        playTrack(currentSongIndex, autoStart = true)
+                    }
+                },
+                onNextClick = { playNextFile() },
+                onLoopClick = {
+                    composeIsLooping = !composeIsLooping
+                    exoPlayer.repeatMode = if (composeIsLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                },
+                onSpeedClick = {
+                    currentSpeedIndex = (currentSpeedIndex + 1) % speeds.size
+                    composeCurrentSpeed = speeds[currentSpeedIndex]
+                    applySpeed()
+                },
+                onSeek = { progressFraction ->
+                    val targetMs = (progressFraction * composeTotalTimeMs).toLong()
+                    exoPlayer.seekTo(targetMs)
+                    composeCurrentTimeMs = targetMs.toInt()
+                },
+                onPlaylistClick = { showPlaylistSheet = true },
+                onBookmarksClick = {
+                    if (playlist.isNotEmpty()) {
+                        refreshBookmarks()
+                        showBookmarksSheet = true
+                    }
                 }
+            )
+
+            if (showPlaylistSheet) {
+                PlaylistBottomSheet(
+                    playlist = playlist,
+                    currentIndex = currentSongIndex,
+                    onDismiss = { showPlaylistSheet = false },
+                    onSongClick = { clickedIndex ->
+                        currentSongIndex = clickedIndex
+                        playTrack(currentSongIndex, autoStart = true)
+                        showPlaylistSheet = false
+                    }
+                )
             }
-        })
+
+            if (showBookmarksSheet) {
+                BookmarksBottomSheet(
+                    bookmarks = currentBookmarks,
+                    onDismiss = { showBookmarksSheet = false },
+                    onAddBookmark = {
+                        val currentMs = exoPlayer.currentPosition.toInt()
+                        val currentFile = playlist[currentSongIndex]
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            bookmarkDao.insert(Bookmark(songId = currentFile.id, timeMillis = currentMs, displayTime = TimeUtils.formatTime(currentMs)))
+                            refreshBookmarks()
+                        }
+                    },
+                    onBookmarkClick = { bookmark ->
+                        exoPlayer.seekTo(bookmark.timeMillis.toLong())
+                        composeCurrentTimeMs = bookmark.timeMillis
+                        showBookmarksSheet = false
+                    },
+                    onDeleteBookmark = { bookmark ->
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            bookmarkDao.delete(bookmark)
+                            refreshBookmarks()
+                        }
+                    }
+                )
+            }
+        }
     }
 
-    override fun onResume() { // Sprawdzanie nowych plików przy otwarciu aplikacji
+    private fun playNextFile() {
+        if (playlist.isNotEmpty()) {
+            currentSongIndex = (currentSongIndex + 1) % playlist.size
+            playTrack(currentSongIndex, autoStart = true)
+        }
+    }
+
+    private fun refreshBookmarks() {
+        if (playlist.isEmpty()) return
+        val currentFileId = playlist[currentSongIndex].id
+        lifecycleScope.launch(Dispatchers.IO) {
+            val dbList = bookmarkDao.getBookmarksForSong(currentFileId)
+            withContext(Dispatchers.Main) {
+                currentBookmarks = dbList // Aktualizacja stanu spowoduje odświeżenie okna
+            }
+        }
+    }
+
+    override fun onResume() {
         super.onResume()
         checkPermissionsAndLoad()
     }
 
     private fun checkPermissionsAndLoad() {
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
-            loadAudioFiles()
-        } else {
-            requestPermissionLauncher.launch(permission)
-        }
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) loadAudioFiles()
+        else requestPermissionLauncher.launch(permission)
     }
 
     private fun loadAudioFiles() {
-        val tempPlaylist = ArrayList<AudioFile>() // Tymczasowa lista
-
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.DURATION
-        )
+        val tempPlaylist = ArrayList<AudioFile>()
+        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.DURATION)
         val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
-
-        val cursor = contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            null,
-            null,
-            sortOrder
-        )
+        val cursor = contentResolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, null, null, sortOrder)
 
         cursor?.use {
-            val idColumn = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-            val titleColumn = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-            val durationColumn = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+            val durCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
 
             while (it.moveToNext()) {
-                val id = it.getLong(idColumn)
-                val title = it.getString(titleColumn)
-                val duration = it.getInt(durationColumn)
-                val contentUri: Uri = ContentUris.withAppendedId(
-                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                    id
-                )
-                tempPlaylist.add(AudioFile(id, title, contentUri, duration))
+                val id = it.getLong(idCol)
+                tempPlaylist.add(AudioFile(id, it.getString(titleCol), ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id), it.getInt(durCol)))
             }
         }
 
-        val oldIds = playlist.map { it.id }
-        val newIds = tempPlaylist.map { it.id }
-
-        if (oldIds == newIds) { // Jeśli nie ma nowych plików
-            return
-        }
-
+        if (playlist.map { it.id } == tempPlaylist.map { it.id }) return
         playlist.clear()
         playlist.addAll(tempPlaylist)
 
-        if (playlist.isEmpty()) {
-            Toast.makeText(this, "Nie znaleziono żadnych plików audio", Toast.LENGTH_LONG).show()
-        } else {
-            Toast.makeText(this, "Odświeżono listę utworów", Toast.LENGTH_SHORT).show()
-
-            playTrack(0, autoStart = false) // Wczytanie pliku 0 (pierwszego z listy)
-        }
+        if (playlist.isEmpty()) Toast.makeText(this, "Brak plików", Toast.LENGTH_LONG).show()
+        else playTrack(0, autoStart = false)
     }
 
-    private fun playTrack(index: Int, autoStart: Boolean) { // Odtwarzanie
+    private fun playTrack(index: Int, autoStart: Boolean) {
         if (playlist.isEmpty()) return
-
         val currentFile = playlist[index]
-
         try {
-            val mediaItem = MediaItem.fromUri(currentFile.uri)
-
-            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.setMediaItem(MediaItem.fromUri(currentFile.uri))
             exoPlayer.prepare()
 
-            textSongTitle.text = currentFile.title
+            composeSongTitle = currentFile.title
+            composeTotalTimeMs = currentFile.duration
+            composeCurrentTimeMs = 0
 
-            textTotalTime.text = formatTime(currentFile.duration)
-            textCurrentTime.text = "0:00"
-            seekBar.progress = 0
-            seekBar.max = currentFile.duration
+            exoPlayer.repeatMode = if (composeIsLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
 
-            exoPlayer.repeatMode = if (isLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-
-            loadAlbumArt(currentFile.uri)
-
-            if (autoStart) { // Przy next/previous
+            if (autoStart) {
                 exoPlayer.play()
                 applySpeed()
                 handler.post(updateSeekBar)
@@ -323,161 +272,16 @@ class MainActivity : AppCompatActivity() {
                 exoPlayer.pause()
                 exoPlayer.seekTo(0)
             }
-            updatePlayPauseIcon()
+            composeIsPlaying = exoPlayer.isPlaying
 
+            refreshBookmarks()
         } catch (e: Exception) {
             e.printStackTrace()
-            Toast.makeText(this, "Błąd wczytywania pliku", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun applySpeed() {
-        val params = PlaybackParameters(speeds[currentSpeedIndex])
-        exoPlayer.playbackParameters = params
-    }
-
-    private fun loadAlbumArt(uri: Uri) { // Okładki
-        val retriever = android.media.MediaMetadataRetriever()
-        val imageView = findViewById<ImageView>(R.id.imageView)
-        try {
-            retriever.setDataSource(this, uri)
-            val artBytes = retriever.embeddedPicture
-            if (artBytes != null) {
-                val bitmap = android.graphics.BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
-                imageView.setImageBitmap(bitmap)
-            } else {
-                imageView.setImageResource(R.drawable.album_cover) // Domyślna
-            }
-        } catch (e: Exception) {
-            imageView.setImageResource(R.drawable.album_cover)
-        } finally {
-            retriever.release()
-        }
-    }
-
-    private fun initViews() {
-        textSongTitle = findViewById(R.id.textSongTitle)
-        textSongTitle.isSelected = true
-        seekBar = findViewById(R.id.seekBar)
-        textCurrentTime = findViewById(R.id.textCurrentTime)
-        textTotalTime = findViewById(R.id.textTotalTime)
-        buttonPlay = findViewById(R.id.buttonPlay)
-        buttonStop = findViewById(R.id.buttonStop)
-        buttonRewind = findViewById(R.id.buttonRewind)
-        buttonForward = findViewById(R.id.buttonForward)
-        buttonSpeed = findViewById(R.id.buttonSpeed)
-        buttonPrevFile = findViewById(R.id.buttonPrevFile)
-        buttonNextFile = findViewById(R.id.buttonNextFile)
-        buttonPlaylist = findViewById(R.id.buttonPlaylist)
-        buttonLoop = findViewById(R.id.buttonLoop)
-    }
-
-    private fun formatTime(milliseconds: Int): String { // Zamiana czasu
-        val hours = TimeUnit.MILLISECONDS.toHours(milliseconds.toLong())
-        val minutes = TimeUnit.MILLISECONDS.toMinutes(milliseconds.toLong()) % 60
-        val seconds = TimeUnit.MILLISECONDS.toSeconds(milliseconds.toLong()) % 60
-        return if (hours > 0) {
-            String.format("%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format("%d:%02d", minutes, seconds)
-        }
-    }
-
-    private fun updatePlayPauseIcon() {
-        if (::exoPlayer.isInitialized && exoPlayer.isPlaying) {
-            buttonPlay.setImageResource(R.drawable.pause)
-        } else {
-            buttonPlay.setImageResource(R.drawable.play)
-        }
-    }
-
-    private fun showPlaylistDialog() { // Lista plików
-        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.dialog_playlist, null)
-        dialog.setContentView(view)
-
-        val recyclerView = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.playlistContainer)
-        recyclerView.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
-
-        val adapter = PlaylistAdapter(playlist, currentSongIndex, ::formatTime) { clickedIndex ->
-            currentSongIndex = clickedIndex
-            playTrack(currentSongIndex, autoStart = true)
-            dialog.dismiss()
-        }
-        recyclerView.adapter = adapter
-
-        dialog.show()
-    }
-
-    private fun showBookmarksDialog() { // Zakładki
-        if(playlist.isEmpty()) return
-
-        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
-        val view = layoutInflater.inflate(R.layout.dialog_bookmarks, null)
-        dialog.setContentView(view)
-
-        val btnAdd = view.findViewById<ImageView>(R.id.btnAddBookmark)
-        val recyclerView = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.bookmarksContainer)
-        val textEmptyInfo = view.findViewById<TextView>(R.id.textEmptyInfo)
-
-        recyclerView.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
-
-        val currentFile = playlist[currentSongIndex]
-
-        val adapter = BookmarksAdapter(
-            onBookmarkClick = { bookmark ->
-                exoPlayer.seekTo(bookmark.timeMillis.toLong())
-                textCurrentTime.text = formatTime(bookmark.timeMillis)
-                dialog.dismiss()
-            },
-            onDeleteClick = { bookmark ->
-                lifecycleScope.launch(Dispatchers.IO) {
-                    bookmarkDao.delete(bookmark)
-                    // Usunięto przekazywanie zmiennej adapter
-                    refreshBookmarksView(currentFile.id, textEmptyInfo, recyclerView)
-                }
-            }
-        )
-        recyclerView.adapter = adapter
-
-        btnAdd.setOnClickListener { // Nowa zakładka
-            val currentMs = exoPlayer.currentPosition.toInt()
-            val display = formatTime(currentMs)
-            val newBookmark = Bookmark(songId = currentFile.id, timeMillis = currentMs, displayTime = display)
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                bookmarkDao.insert(newBookmark)
-                // Usunięto przekazywanie zmiennej adapter
-                refreshBookmarksView(currentFile.id, textEmptyInfo, recyclerView)
-            }
-        }
-
-        // Pobranie zakładek przy otwarciu
-        lifecycleScope.launch(Dispatchers.IO) {
-            refreshBookmarksView(currentFile.id, textEmptyInfo, recyclerView)
-        }
-        dialog.show()
-    }
-
-    // Funkcja pomocnicza już nie wymaga zmiennej adapter jako argumentu
-    private suspend fun refreshBookmarksView(
-        songId: Long,
-        emptyView: TextView?,
-        recyclerView: androidx.recyclerview.widget.RecyclerView
-    ) {
-        val dbList = bookmarkDao.getBookmarksForSong(songId)
-        withContext(Dispatchers.Main) {
-            // Pobieramy adapter bezpośrednio z recyclerView
-            (recyclerView.adapter as? BookmarksAdapter)?.submitList(dbList)
-
-            if (dbList.isEmpty()) {
-                emptyView?.visibility = View.VISIBLE
-                recyclerView.visibility = View.GONE
-            } else {
-                emptyView?.visibility = View.GONE
-                recyclerView.visibility = View.VISIBLE
-            }
-        }
+        exoPlayer.playbackParameters = PlaybackParameters(speeds[currentSpeedIndex])
     }
 
     override fun onDestroy() {
@@ -486,10 +290,3 @@ class MainActivity : AppCompatActivity() {
         exoPlayer.release()
     }
 }
-
-data class AudioFile(
-    val id: Long,
-    val title: String,
-    val uri: android.net.Uri,
-    val duration: Int
-)
