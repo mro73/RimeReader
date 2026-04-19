@@ -10,52 +10,27 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.room.Room
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 
-
 class MainActivity : ComponentActivity() {
-    private lateinit var exoPlayer: ExoPlayer
-    private val playlist = ArrayList<AudioFile>()
-    private val speeds = floatArrayOf(1.0f, 1.25f, 1.5f, 1.75f)
-    private var currentSpeedIndex = 0
-    private var currentSongIndex = 0
 
+    private val viewModel: MainViewModel by viewModels()
+    private lateinit var exoPlayer: ExoPlayer
     private lateinit var db: AppDatabase
     private lateinit var bookmarkDao: BookmarkDao
-
     private lateinit var audioRepository: AudioRepository
-
     private val handler = Handler(Looper.getMainLooper())
-
-    private var composeSongTitle by mutableStateOf("")
-    private var composeCurrentTimeMs by mutableIntStateOf(0)
-    private var composeTotalTimeMs by mutableIntStateOf(0)
-    private var composeIsPlaying by mutableStateOf(false)
-    private var composeIsLooping by mutableStateOf(false)
-    private var composeCurrentSpeed by mutableFloatStateOf(1.0f)
-
-    private var showPlaylistSheet by mutableStateOf(false)
-    private var showBookmarksSheet by mutableStateOf(false)
-    private var currentBookmarks by mutableStateOf<List<Bookmark>>(emptyList())
 
     private val updateSeekBar: Runnable = object : Runnable {
         override fun run() {
             if (::exoPlayer.isInitialized && exoPlayer.isPlaying) {
-                composeCurrentTimeMs = exoPlayer.currentPosition.toInt()
+                viewModel.currentTimeMs = exoPlayer.currentPosition.toInt()
                 handler.postDelayed(this, 200)
             }
         }
@@ -74,9 +49,7 @@ class MainActivity : ComponentActivity() {
             .fallbackToDestructiveMigration()
             .build()
         bookmarkDao = db.bookmarkDao()
-
         audioRepository = AudioRepository(this)
-
         exoPlayer = ExoPlayer.Builder(this).build()
 
         exoPlayer.addListener(object : Player.Listener {
@@ -86,7 +59,7 @@ class MainActivity : ComponentActivity() {
                     handler.removeCallbacks(updateSeekBar)
                     handler.post(updateSeekBar)
                 }
-                composeIsPlaying = exoPlayer.isPlaying
+                viewModel.isPlaying = exoPlayer.isPlaying
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Toast.makeText(this@MainActivity, "Błąd odtwarzania", Toast.LENGTH_SHORT).show()
@@ -95,12 +68,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PlayerScreen(
-                songTitle = composeSongTitle,
-                currentTimeMs = composeCurrentTimeMs,
-                totalTimeMs = composeTotalTimeMs,
-                isPlaying = composeIsPlaying,
-                isLooping = composeIsLooping,
-                currentSpeed = composeCurrentSpeed,
+                songTitle = viewModel.songTitle,
+                currentTimeMs = viewModel.currentTimeMs,
+                totalTimeMs = viewModel.totalTimeMs,
+                isPlaying = viewModel.isPlaying,
+                isLooping = viewModel.isLooping,
+                currentSpeed = viewModel.currentSpeed,
                 onPlayPauseClick = {
                     if (exoPlayer.isPlaying) exoPlayer.pause()
                     else {
@@ -108,91 +81,86 @@ class MainActivity : ComponentActivity() {
                         applySpeed()
                         handler.post(updateSeekBar)
                     }
-                    composeIsPlaying = exoPlayer.isPlaying
+                    viewModel.isPlaying = exoPlayer.isPlaying
                 },
                 onStopClick = {
                     exoPlayer.stop()
                     exoPlayer.clearMediaItems()
-                    composeIsPlaying = false
-                    composeCurrentTimeMs = 0
-                    playTrack(currentSongIndex, autoStart = false)
+                    viewModel.isPlaying = false
+                    viewModel.currentTimeMs = 0
+                    playTrack(viewModel.currentSongIndex, autoStart = false)
                 },
                 onRewindClick = {
                     val newPosition = exoPlayer.currentPosition - 15000
                     exoPlayer.seekTo(if (newPosition > 0) newPosition else 0)
-                    composeCurrentTimeMs = exoPlayer.currentPosition.toInt()
+                    viewModel.currentTimeMs = exoPlayer.currentPosition.toInt()
                 },
                 onForwardClick = {
                     val newPosition = exoPlayer.currentPosition + 30000
                     val duration = exoPlayer.duration
                     exoPlayer.seekTo(if (newPosition < duration) newPosition else duration)
-                    composeCurrentTimeMs = exoPlayer.currentPosition.toInt()
+                    viewModel.currentTimeMs = exoPlayer.currentPosition.toInt()
                 },
                 onPrevClick = {
-                    if (playlist.isNotEmpty()) {
-                        currentSongIndex = if (currentSongIndex > 0) currentSongIndex - 1 else playlist.size - 1
-                        playTrack(currentSongIndex, autoStart = true)
+                    if (viewModel.playlist.isNotEmpty()) {
+                        viewModel.currentSongIndex = if (viewModel.currentSongIndex > 0) viewModel.currentSongIndex - 1 else viewModel.playlist.size - 1
+                        playTrack(viewModel.currentSongIndex, autoStart = true)
                     }
                 },
                 onNextClick = { playNextFile() },
                 onLoopClick = {
-                    composeIsLooping = !composeIsLooping
-                    exoPlayer.repeatMode = if (composeIsLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                    viewModel.isLooping = !viewModel.isLooping
+                    exoPlayer.repeatMode = if (viewModel.isLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 },
                 onSpeedClick = {
-                    currentSpeedIndex = (currentSpeedIndex + 1) % speeds.size
-                    composeCurrentSpeed = speeds[currentSpeedIndex]
+                    viewModel.currentSpeedIndex = (viewModel.currentSpeedIndex + 1) % viewModel.speeds.size
+                    viewModel.currentSpeed = viewModel.speeds[viewModel.currentSpeedIndex]
                     applySpeed()
                 },
                 onSeek = { progressFraction ->
-                    val targetMs = (progressFraction * composeTotalTimeMs).toLong()
+                    val targetMs = (progressFraction * viewModel.totalTimeMs).toLong()
                     exoPlayer.seekTo(targetMs)
-                    composeCurrentTimeMs = targetMs.toInt()
+                    viewModel.currentTimeMs = targetMs.toInt()
                 },
-                onPlaylistClick = { showPlaylistSheet = true },
+                onPlaylistClick = { viewModel.showPlaylistSheet = true },
                 onBookmarksClick = {
-                    if (playlist.isNotEmpty()) {
-                        refreshBookmarks()
-                        showBookmarksSheet = true
+                    if (viewModel.playlist.isNotEmpty()) {
+                        viewModel.refreshBookmarks(bookmarkDao, viewModel.playlist[viewModel.currentSongIndex].id)
+                        viewModel.showBookmarksSheet = true
                     }
                 }
             )
 
-            if (showPlaylistSheet) {
+            if (viewModel.showPlaylistSheet) {
                 PlaylistBottomSheet(
-                    playlist = playlist,
-                    currentIndex = currentSongIndex,
-                    onDismiss = { showPlaylistSheet = false },
+                    playlist = viewModel.playlist,
+                    currentIndex = viewModel.currentSongIndex,
+                    onDismiss = { viewModel.showPlaylistSheet = false },
                     onSongClick = { clickedIndex ->
-                        currentSongIndex = clickedIndex
-                        playTrack(currentSongIndex, autoStart = true)
-                        showPlaylistSheet = false
+                        viewModel.currentSongIndex = clickedIndex
+                        playTrack(viewModel.currentSongIndex, autoStart = true)
+                        viewModel.showPlaylistSheet = false
                     }
                 )
             }
 
-            if (showBookmarksSheet) {
+            if (viewModel.showBookmarksSheet) {
                 BookmarksBottomSheet(
-                    bookmarks = currentBookmarks,
-                    onDismiss = { showBookmarksSheet = false },
+                    bookmarks = viewModel.currentBookmarks,
+                    onDismiss = { viewModel.showBookmarksSheet = false },
                     onAddBookmark = {
                         val currentMs = exoPlayer.currentPosition.toInt()
-                        val currentFile = playlist[currentSongIndex]
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            bookmarkDao.insert(Bookmark(songId = currentFile.id, timeMillis = currentMs, displayTime = TimeUtils.formatTime(currentMs)))
-                            refreshBookmarks()
-                        }
+                        val currentFile = viewModel.playlist[viewModel.currentSongIndex]
+                        viewModel.addBookmark(bookmarkDao, currentFile.id, currentMs)
                     },
                     onBookmarkClick = { bookmark ->
                         exoPlayer.seekTo(bookmark.timeMillis.toLong())
-                        composeCurrentTimeMs = bookmark.timeMillis
-                        showBookmarksSheet = false
+                        viewModel.currentTimeMs = bookmark.timeMillis
+                        viewModel.showBookmarksSheet = false
                     },
                     onDeleteBookmark = { bookmark ->
-                        lifecycleScope.launch(Dispatchers.IO) {
-                            bookmarkDao.delete(bookmark)
-                            refreshBookmarks()
-                        }
+                        val currentFile = viewModel.playlist[viewModel.currentSongIndex]
+                        viewModel.deleteBookmark(bookmarkDao, bookmark, currentFile.id)
                     }
                 )
             }
@@ -200,20 +168,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playNextFile() {
-        if (playlist.isNotEmpty()) {
-            currentSongIndex = (currentSongIndex + 1) % playlist.size
-            playTrack(currentSongIndex, autoStart = true)
-        }
-    }
-
-    private fun refreshBookmarks() {
-        if (playlist.isEmpty()) return
-        val currentFileId = playlist[currentSongIndex].id
-        lifecycleScope.launch(Dispatchers.IO) {
-            val dbList = bookmarkDao.getBookmarksForSong(currentFileId)
-            withContext(Dispatchers.Main) {
-                currentBookmarks = dbList
-            }
+        if (viewModel.playlist.isNotEmpty()) {
+            viewModel.currentSongIndex = (viewModel.currentSongIndex + 1) % viewModel.playlist.size
+            playTrack(viewModel.currentSongIndex, autoStart = true)
         }
     }
 
@@ -231,12 +188,12 @@ class MainActivity : ComponentActivity() {
     private fun loadAudioFiles() {
         val tempPlaylist = audioRepository.getAudioFiles()
 
-        if (playlist.map { it.id } == tempPlaylist.map { it.id }) return
+        // Porównujemy ID plików, żeby nie przeładowywać listy bez potrzeby
+        if (viewModel.playlist.map { it.id } == tempPlaylist.map { it.id }) return
 
-        playlist.clear()
-        playlist.addAll(tempPlaylist)
+        viewModel.playlist = tempPlaylist
 
-        if (playlist.isEmpty()) {
+        if (viewModel.playlist.isEmpty()) {
             Toast.makeText(this, "Brak plików", Toast.LENGTH_LONG).show()
         } else {
             playTrack(0, autoStart = false)
@@ -244,17 +201,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playTrack(index: Int, autoStart: Boolean) {
-        if (playlist.isEmpty()) return
-        val currentFile = playlist[index]
+        if (viewModel.playlist.isEmpty()) return
+        val currentFile = viewModel.playlist[index]
         try {
             exoPlayer.setMediaItem(MediaItem.fromUri(currentFile.uri))
             exoPlayer.prepare()
 
-            composeSongTitle = currentFile.title
-            composeTotalTimeMs = currentFile.duration
-            composeCurrentTimeMs = 0
+            viewModel.songTitle = currentFile.title
+            viewModel.totalTimeMs = currentFile.duration
+            viewModel.currentTimeMs = 0
 
-            exoPlayer.repeatMode = if (composeIsLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+            exoPlayer.repeatMode = if (viewModel.isLooping) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
 
             if (autoStart) {
                 exoPlayer.play()
@@ -264,16 +221,16 @@ class MainActivity : ComponentActivity() {
                 exoPlayer.pause()
                 exoPlayer.seekTo(0)
             }
-            composeIsPlaying = exoPlayer.isPlaying
+            viewModel.isPlaying = exoPlayer.isPlaying
 
-            refreshBookmarks()
+            viewModel.refreshBookmarks(bookmarkDao, currentFile.id)
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
     private fun applySpeed() {
-        exoPlayer.playbackParameters = PlaybackParameters(speeds[currentSpeedIndex])
+        exoPlayer.playbackParameters = PlaybackParameters(viewModel.speeds[viewModel.currentSpeedIndex])
     }
 
     override fun onDestroy() {
