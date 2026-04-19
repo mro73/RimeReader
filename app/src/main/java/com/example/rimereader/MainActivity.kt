@@ -1,13 +1,11 @@
 package com.example.rimereader
 
 import android.Manifest
-import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -28,6 +26,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 
+
 class MainActivity : ComponentActivity() {
     private lateinit var exoPlayer: ExoPlayer
     private val playlist = ArrayList<AudioFile>()
@@ -37,6 +36,8 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var db: AppDatabase
     private lateinit var bookmarkDao: BookmarkDao
+
+    private lateinit var audioRepository: AudioRepository
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -49,7 +50,6 @@ class MainActivity : ComponentActivity() {
 
     private var showPlaylistSheet by mutableStateOf(false)
     private var showBookmarksSheet by mutableStateOf(false)
-
     private var currentBookmarks by mutableStateOf<List<Bookmark>>(emptyList())
 
     private val updateSeekBar: Runnable = object : Runnable {
@@ -74,6 +74,8 @@ class MainActivity : ComponentActivity() {
             .fallbackToDestructiveMigration()
             .build()
         bookmarkDao = db.bookmarkDao()
+
+        audioRepository = AudioRepository(this)
 
         exoPlayer = ExoPlayer.Builder(this).build()
 
@@ -210,7 +212,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val dbList = bookmarkDao.getBookmarksForSong(currentFileId)
             withContext(Dispatchers.Main) {
-                currentBookmarks = dbList // Aktualizacja stanu spowoduje odświeżenie okna
+                currentBookmarks = dbList
             }
         }
     }
@@ -227,28 +229,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadAudioFiles() {
-        val tempPlaylist = ArrayList<AudioFile>()
-        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.DURATION)
-        val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
-        val cursor = contentResolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, null, null, sortOrder)
-
-        cursor?.use {
-            val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-            val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-            val durCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-
-            while (it.moveToNext()) {
-                val id = it.getLong(idCol)
-                tempPlaylist.add(AudioFile(id, it.getString(titleCol), ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id), it.getInt(durCol)))
-            }
-        }
+        val tempPlaylist = audioRepository.getAudioFiles()
 
         if (playlist.map { it.id } == tempPlaylist.map { it.id }) return
+
         playlist.clear()
         playlist.addAll(tempPlaylist)
 
-        if (playlist.isEmpty()) Toast.makeText(this, "Brak plików", Toast.LENGTH_LONG).show()
-        else playTrack(0, autoStart = false)
+        if (playlist.isEmpty()) {
+            Toast.makeText(this, "Brak plików", Toast.LENGTH_LONG).show()
+        } else {
+            playTrack(0, autoStart = false)
+        }
     }
 
     private fun playTrack(index: Int, autoStart: Boolean) {
