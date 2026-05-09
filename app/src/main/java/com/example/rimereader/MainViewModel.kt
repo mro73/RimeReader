@@ -12,7 +12,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // View model for the main screen
-class MainViewModel : ViewModel() {
+class MainViewModel(
+    private val bookmarkDao: BookmarkDao,
+    private val audioRepository: AudioRepository
+) : ViewModel() {
 
     // State variables for the main screen
     var songTitle by mutableStateOf("") // Title of the current song
@@ -34,11 +37,10 @@ class MainViewModel : ViewModel() {
     var currentSpeedIndex by mutableIntStateOf(0) // Index of the current playback speed in the speeds array
 
 
-
     // Function to refresh the list of bookmarks for the currently playing song
-    fun refreshBookmarks(dao: BookmarkDao, songId: Long) {
+    fun refreshBookmarks(songId: Long) {
         viewModelScope.launch(Dispatchers.IO) { // Launch the process in a background thread
-            val dbList = dao.getBookmarksForSong(songId) // Fetch bookmarks from the database
+            val dbList = bookmarkDao.getBookmarksForSong(songId) // Fetch bookmarks from the database
             withContext(Dispatchers.Main) { // Update the UI in the main thread
                 currentBookmarks = dbList
             }
@@ -46,19 +48,25 @@ class MainViewModel : ViewModel() {
     }
 
     // Function to add a bookmark to the database and update the current bookmarks list
-    fun addBookmark(dao: BookmarkDao, songId: Long, timeMs: Int) {
+    fun addBookmark(songId: Long, timeMs: Int) {
         viewModelScope.launch(Dispatchers.IO) { // Launch the process in a background thread
-            dao.insert(Bookmark(songId = songId, timeMillis = timeMs, displayTime = TimeUtils.formatTime(timeMs)))
-            refreshBookmarks(dao, songId)
+            bookmarkDao.insert(Bookmark(songId = songId, timeMillis = timeMs, displayTime = TimeUtils.formatTime(timeMs)))
+            refreshBookmarks(songId)
         }
     }
 
     // Function to delete a bookmark from the database and update the current bookmarks list
-    fun deleteBookmark(dao: BookmarkDao, bookmark: Bookmark, songId: Long) {
+    fun deleteBookmark(bookmark: Bookmark, songId: Long) {
         viewModelScope.launch(Dispatchers.IO) { // Launch the process in a background thread
-            dao.delete(bookmark)
-            refreshBookmarks(dao, songId)
+            bookmarkDao.delete(bookmark)
+            refreshBookmarks(songId)
         }
     }
 
+    fun loadAudioFiles() {
+        // ViewModel używa swojego prywatnego audioRepository
+        val tempPlaylist = audioRepository.getAudioFiles()
+        if (playlist.map { it.id } == tempPlaylist.map { it.id }) return
+        playlist = tempPlaylist
+    }
 }

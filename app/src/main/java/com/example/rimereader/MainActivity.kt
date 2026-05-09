@@ -20,11 +20,15 @@ import androidx.media3.common.Player
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: MainViewModel by viewModels()
+    private val viewModel: MainViewModel by viewModels {
+        val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "audiobook-db")
+            .fallbackToDestructiveMigration()
+            .build()
+        val repository = AudioRepository(applicationContext)
+        MainViewModelFactory(db.bookmarkDao(), repository)
+    }
+
     private lateinit var exoPlayer: ExoPlayer
-    private lateinit var db: AppDatabase
-    private lateinit var bookmarkDao: BookmarkDao
-    private lateinit var audioRepository: AudioRepository
     private val handler = Handler(Looper.getMainLooper())
 
     private val updateSeekBar: Runnable = object : Runnable {
@@ -39,19 +43,13 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
-        if (isGranted) loadAudioFiles() else Toast.makeText(this, "Brak uprawnień", Toast.LENGTH_LONG).show()
+        if (isGranted) loadFilesAndStart() else Toast.makeText(this, "Brak uprawnień", Toast.LENGTH_LONG).show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "audiobook-db")
-            .fallbackToDestructiveMigration()
-            .build()
-        bookmarkDao = db.bookmarkDao()
-        audioRepository = AudioRepository(this)
         exoPlayer = ExoPlayer.Builder(this).build()
-
         exoPlayer.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) playNextFile()
@@ -125,7 +123,8 @@ class MainActivity : ComponentActivity() {
                 onPlaylistClick = { viewModel.showPlaylistSheet = true },
                 onBookmarksClick = {
                     if (viewModel.playlist.isNotEmpty()) {
-                        viewModel.refreshBookmarks(bookmarkDao, viewModel.playlist[viewModel.currentSongIndex].id)
+                        // Zauważ brak przekazywania "dao" !!!
+                        viewModel.refreshBookmarks(viewModel.playlist[viewModel.currentSongIndex].id)
                         viewModel.showBookmarksSheet = true
                     }
                 }
@@ -151,7 +150,7 @@ class MainActivity : ComponentActivity() {
                     onAddBookmark = {
                         val currentMs = exoPlayer.currentPosition.toInt()
                         val currentFile = viewModel.playlist[viewModel.currentSongIndex]
-                        viewModel.addBookmark(bookmarkDao, currentFile.id, currentMs)
+                        viewModel.addBookmark(currentFile.id, currentMs)
                     },
                     onBookmarkClick = { bookmark ->
                         exoPlayer.seekTo(bookmark.timeMillis.toLong())
@@ -160,7 +159,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onDeleteBookmark = { bookmark ->
                         val currentFile = viewModel.playlist[viewModel.currentSongIndex]
-                        viewModel.deleteBookmark(bookmarkDao, bookmark, currentFile.id)
+                        viewModel.deleteBookmark(bookmark, currentFile.id)
                     }
                 )
             }
@@ -181,22 +180,16 @@ class MainActivity : ComponentActivity() {
 
     private fun checkPermissionsAndLoad() {
         val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) loadAudioFiles()
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) loadFilesAndStart()
         else requestPermissionLauncher.launch(permission)
     }
 
-    private fun loadAudioFiles() {
-        val tempPlaylist = audioRepository.getAudioFiles()
-
-        // Porównujemy ID plików, żeby nie przeładowywać listy bez potrzeby
-        if (viewModel.playlist.map { it.id } == tempPlaylist.map { it.id }) return
-
-        viewModel.playlist = tempPlaylist
-
+    private fun loadFilesAndStart() {
+        viewModel.loadAudioFiles()
         if (viewModel.playlist.isEmpty()) {
             Toast.makeText(this, "Brak plików", Toast.LENGTH_LONG).show()
         } else {
-            playTrack(0, autoStart = false)
+            playTrack(viewModel.currentSongIndex, autoStart = false)
         }
     }
 
@@ -223,7 +216,7 @@ class MainActivity : ComponentActivity() {
             }
             viewModel.isPlaying = exoPlayer.isPlaying
 
-            viewModel.refreshBookmarks(bookmarkDao, currentFile.id)
+            viewModel.refreshBookmarks(currentFile.id)
         } catch (e: Exception) {
             e.printStackTrace()
         }
