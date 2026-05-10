@@ -18,7 +18,8 @@ class MainViewModel(
 ) : ViewModel() {
 
     // State variables for the main screen
-    var songTitle by mutableStateOf("") // Title of the current song
+    var songTitle by mutableStateOf("") // Title of the current file
+    var currentArtwork by mutableStateOf<ByteArray?>(null) // Artwork of the current file
     var currentTimeMs by mutableIntStateOf(0) // Current time in milliseconds
     var totalTimeMs by mutableIntStateOf(0) // Total time in milliseconds
 

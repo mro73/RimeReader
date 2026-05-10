@@ -1,5 +1,8 @@
 package com.example.rimereader
 
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -38,6 +41,7 @@ fun PlayerScreen(
     isPlaying: Boolean,
     isLooping: Boolean,
     currentSpeed: Float,
+    currentArtwork: ByteArray?,
     onPlayPauseClick: () -> Unit,
     onStopClick: () -> Unit,
     onNextClick: () -> Unit,
@@ -96,14 +100,31 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxWidth().basicMarquee()
         )
 
-        Icon(
-            painter = painterResource(id = R.drawable.ic_default_cover),
-            contentDescription = "Domyślna okładka",
-            tint = iconColor,
-            modifier = Modifier
-                .padding(vertical = 32.dp)
-                .size(150.dp)
-        )
+        val bitmap = remember(currentArtwork) {
+            currentArtwork?.let {
+                BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap()
+            }
+        }
+
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Okładka z pliku",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .padding(vertical = 16.dp)
+                    .size(250.dp)
+            )
+        } else {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_default_cover),
+                contentDescription = "Domyślna okładka",
+                tint = iconColor,
+                modifier = Modifier
+                    .padding(vertical = 32.dp)
+                    .size(150.dp)
+            )
+        }
 
         Slider(
             value = progress,

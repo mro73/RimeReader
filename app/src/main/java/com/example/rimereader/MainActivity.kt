@@ -62,6 +62,10 @@ class MainActivity : ComponentActivity() {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Toast.makeText(this@MainActivity, "Błąd odtwarzania", Toast.LENGTH_SHORT).show()
             }
+
+            override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
+                viewModel.currentArtwork = mediaMetadata.artworkData
+            }
         })
 
         setContent {
@@ -72,6 +76,7 @@ class MainActivity : ComponentActivity() {
                 isPlaying = viewModel.isPlaying,
                 isLooping = viewModel.isLooping,
                 currentSpeed = viewModel.currentSpeed,
+                currentArtwork = viewModel.currentArtwork,
                 onPlayPauseClick = {
                     if (exoPlayer.isPlaying) exoPlayer.pause()
                     else {
@@ -123,7 +128,6 @@ class MainActivity : ComponentActivity() {
                 onPlaylistClick = { viewModel.showPlaylistSheet = true },
                 onBookmarksClick = {
                     if (viewModel.playlist.isNotEmpty()) {
-                        // Zauważ brak przekazywania "dao" !!!
                         viewModel.refreshBookmarks(viewModel.playlist[viewModel.currentSongIndex].id)
                         viewModel.showBookmarksSheet = true
                     }
