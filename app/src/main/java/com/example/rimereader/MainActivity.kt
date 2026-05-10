@@ -87,11 +87,10 @@ class MainActivity : ComponentActivity() {
                     viewModel.isPlaying = exoPlayer.isPlaying
                 },
                 onStopClick = {
-                    exoPlayer.stop()
-                    exoPlayer.clearMediaItems()
+                    exoPlayer.pause()
+                    exoPlayer.seekTo(0)
                     viewModel.isPlaying = false
                     viewModel.currentTimeMs = 0
-                    playTrack(viewModel.currentSongIndex, autoStart = false)
                 },
                 onRewindClick = {
                     val newPosition = exoPlayer.currentPosition - 15000

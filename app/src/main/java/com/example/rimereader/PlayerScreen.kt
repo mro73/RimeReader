@@ -106,24 +106,29 @@ fun PlayerScreen(
             }
         }
 
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = "Okładka z pliku",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .padding(vertical = 16.dp)
-                    .size(250.dp)
-            )
-        } else {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_default_cover),
-                contentDescription = "Domyślna okładka",
-                tint = iconColor,
-                modifier = Modifier
-                    .padding(vertical = 32.dp)
-                    .size(150.dp)
-            )
+        Box(
+            modifier = Modifier
+                .padding(vertical = 16.dp)
+                .size(250.dp),
+            contentAlignment = Alignment.Center // Zawsze centruje zawartość
+        ) {
+            if (bitmap != null) {
+                // Prawdziwa okładka wypełnia całe 250.dp
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = "Okładka z pliku",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                // Nutka ma 150.dp, ale siedzi grzecznie na środku 250-pikselowego pudełka
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_default_cover),
+                    contentDescription = "Domyślna okładka",
+                    tint = iconColor,
+                    modifier = Modifier.size(150.dp)
+                )
+            }
         }
 
         Slider(
