@@ -188,10 +188,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadFilesAndStart() {
+        val wasEmpty = viewModel.playlist.isEmpty()
         viewModel.loadAudioFiles()
+
         if (viewModel.playlist.isEmpty()) {
             Toast.makeText(this, "Brak plików", Toast.LENGTH_LONG).show()
-        } else {
+        } else if (wasEmpty) {
             playTrack(viewModel.currentSongIndex, autoStart = false)
         }
     }
